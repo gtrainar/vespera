@@ -1,2 +1,2 @@
 # vespera
-Scripts for Vespera Smart Telescop
+Scripts for Vespera Smart Telescope
