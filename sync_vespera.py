@@ -153,6 +153,8 @@ def download_and_process_dir(
 
         obj_match = re.search(r"observation-([^/]+)", remote_path)
         objet = obj_match.group(1).upper() if obj_match else "UNKNOWN"
+        if any(char.isdigit() for char in objet):
+            objet = objet[:objet.find(next(filter(str.isdigit, objet)))] + " " + objet[objet.find(next(filter(str.isdigit, objet))):]
 
         dest_dir = LOCAL_DIR / objet
         dest_dir.mkdir(parents=True, exist_ok=True)
