@@ -160,7 +160,12 @@ def download_and_process_dir(
         dest_dir.mkdir(parents=True, exist_ok=True)
 
         ext = Path(filename).suffix.lstrip(".")
-        new_name = f"{objet}_{date}.{ext}"
+        base_name = f"{objet}_{date}"
+        new_name = f"{base_name}-{filename.split('-')[1].split('.')[0]}.{ext}"
+
+        if "-dark.fits" in filename:
+            new_name = "master_dark.fits"
+            
         dest_path = dest_dir / new_name
 
         shutil.move(str(local_file), str(dest_path))
