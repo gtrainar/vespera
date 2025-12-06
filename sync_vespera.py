@@ -151,7 +151,7 @@ def download_and_process_dir(
         date_match = re.search(r"\d{4}-\d{2}-\d{2}", remote_path)
         date = date_match.group(0) if date_match else "unknown"
 
-        obj_match = re.search(r"observation-([^/]+)", remote_path)
+        obj_match = re.search(r"observation[-_]([^/]+)", remote_path)
         objet = obj_match.group(1).upper() if obj_match else "UNKNOWN"
         if any(char.isdigit() for char in objet):
             objet = objet[:objet.find(next(filter(str.isdigit, objet)))] + " " + objet[objet.find(next(filter(str.isdigit, objet))):]
