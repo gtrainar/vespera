@@ -145,7 +145,7 @@ The plugin creates:
 
 * `result_XXXXs.fit` – Final stacked image (32‑bit, linear)  
 * `masters/dark_stacked.fit` – Master dark frame  
-* `process/` – Intermediate files (deleted unless “Keep temp files” enabled)
+* `process/` – Intermediate files (deleted if “Clean temporary files” enabled)
 
 ---
 
