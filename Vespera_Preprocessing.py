@@ -538,32 +538,35 @@ class ProcessingThread(QThread):
         self.siril.cmd(*cmd)
 
     def _register(self, seq_name: str, stack_method: dict) -> None:
-        if stack_method.get("use_drizzle"):
-            cmd = [
-                "register", f"pp_{seq_name}",
+        
+        use_drizzle = stack_method.get("use_drizzle", False)
+        drizzle_scale = stack_method.get("drizzle_scale", 1.0)
+
+        cmd = ["register", f"pp_{seq_name}"]
+
+        if use_drizzle:
+            cmd += [
                 "-drizzle",
-                f"-scale={stack_method.get('drizzle_scale',1.0)}",
-                f"-pixfrac={stack_method.get('drizzle_pixfrac',1.0)}",
-                f"-kernel={stack_method.get('drizzle_kernel','square')}",
-                f"-interp={stack_method.get('interp','area')}"
+                f"-scale={drizzle_scale}",
+                f"-pixfrac={stack_method.get('drizzle_pixfrac', 1.0)}",
+                f"-kernel={stack_method.get('drizzle_kernel', 'square')}",
+                f"-interp={stack_method.get('interp', 'area')}"
             ]
 
-            if self.settings.get("two_pass", False):
-                cmd.append("-2pass")
+        if self.settings.get("two_pass", False) and (not use_drizzle or drizzle_scale == 1.0):
+            cmd.append("-2pass")
 
-            self.siril.cmd(*cmd)
-        else:
-            cmd = ["register", f"pp_{seq_name}"]
-            if self.settings.get("two_pass", False):
-                cmd.append("-2pass")
-            self.siril.cmd(*cmd)
+        self.siril.cmd(*cmd)
 
         if self.settings.get("two_pass", False):
-            self._log("Applying framing for two-pass registration...", LogColor.BLUE)
-            if stack_method.get("use_drizzle"):
-                self.siril.cmd("seqapplyreg", f"pp_{seq_name}", "-drizzle", "-framing=max")
-            else:
+            if not use_drizzle:
                 self.siril.cmd("seqapplyreg", f"pp_{seq_name}", "-framing=max")
+            else:
+                if drizzle_scale == 1.0:
+                    self.siril.cmd("seqapplyreg", f"pp_{seq_name}",
+                                   "-drizzle", "-framing=max")
+                else:
+                    pass
 
     def _stack(self, seq_name: str, stack_method: dict,
                sigma_low: float, sigma_high: float, output_name: str) -> None:
@@ -571,11 +574,18 @@ class ProcessingThread(QThread):
             "stack", f"r_pp_{seq_name}",
             "rej", str(sigma_low), str(sigma_high),
             "-norm=addscale", "-output_norm", "-32b",
-            "-rgb_equal", "-maximize", "-filter-included", "-weight=wfwhm"
+            "-rgb_equal", "-filter-included", "-weight=wfwhm"
         ]
 
+        if self.settings.get("two_pass", False):
+            use_drizzle   = stack_method.get("use_drizzle", False)
+            drizzle_scale = stack_method.get("drizzle_scale", 1.0)
+
+            if (not use_drizzle) or (use_drizzle and drizzle_scale == 1.0):
+                stack_cmd.append("-maximize")
+
         if self.settings.get("feather_enabled", False) and self.settings.get("feather_px", 0) > 0:
-            stack_cmd.append(f"-feather={self.settings['feather']}")
+            stack_cmd.append(f"-feather={self.settings['feather_px']}")
 
         stack_cmd.append(f"-out={output_name}")
         self.siril.cmd(*stack_cmd)
