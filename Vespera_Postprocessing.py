@@ -1,13 +1,13 @@
 ##############################################
 # Vespera Postprocessing
-# One-Click Image Preparation Pipeline
+# One‑Click Image Preparation Pipeline
 # For Vespera Smart Telescope
 # Author: G. Trainar
 # Contact: https://github.com/gtrainar
 ##############################################
 
 # MIT License
-# Version 1.0.0
+# Version 1.1.0
 
 """
 Overview
@@ -18,26 +18,11 @@ automates the tedious pre‑stretch workflow:
 1. Background Extraction (GraXpert AI or Siril RBF)
 2. Plate Solving (for coordinate metadata)
 3. Spectrophotometric Color Correction (SPCC)
-4. Optional Denoising (multiple engine choices)
-5. Optional auto‑launch of VeraLux HMS for stretching
+4. Denoising (multiple engine choices)
+5. Auto or VeraLux HMS for stretching
 
 This plugin bridges the gap between Vespera's output and the final stretch,
 eliminating repetitive manual steps while preserving full control over each stage.
-
-Usage
------
-1. Load your Vespera TIFF in Siril
-2. Open Vespera Postprocessing from Scripts menu
-3. Select your preferred options
-4. Click "Prep Image"
-5. Image is ready for stretching (or HMS auto‑launches)
-
-Requirements
-------------
-- Siril 1.3+ with sirilpy
-- PyQt6
-- GraXpert‑AI.py (for AI background extraction)
-- Optional: VeraLux Silentium, Cosmic Clarity for denoise options
 """
 
 import sys
@@ -59,19 +44,22 @@ from PyQt6.QtWidgets import (
     QCheckBox, QSlider, QProgressBar, QMessageBox, QFrame,
     QLineEdit, QInputDialog, QComboBox
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSettings, QProcess
 from PyQt6.QtGui import QFont
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 # ---------------------
 #  CHANGE LOG
 # ---------------------
 CHANGELOG = """
+Version 1.1.0 (2026-02)
+- Autostretch
+- GUI refresh
+
 Version 1.0.0 (2026-01)
 - Advanced plate solving with SIMBAD integration
 - Manual DSO name entry fallback
-- Enhanced coordinate formatting and validation
 - SPCC
 - Vespera II and Vespera Pro support
 """
@@ -80,7 +68,7 @@ Version 1.0.0 (2026-01)
 #  DARK THEME
 # ---------------------
 DARK_STYLESHEET = """
-QWidget { background-color: #2b2b2b; color: #e0e0e0; font-size: 10pt; }
+QWidget { background-color: #2b2b2b; color: #e0e0e0; font-size: 12pt; }
 QToolTip { background-color: #333333; color: #ffffff; border: 1px solid #88aaff; }
 QGroupBox {
     border: 1px solid #444444;
@@ -387,12 +375,19 @@ class PrepWorker(QThread):
             elif self.options['spcc'] and not plate_solve_success:
                 self.siril.log("Skipping color calibration - requires plate solved image", LogColor.SALMON)
 
-            # Step 4: Denoise (optional)
+            # Step 4: Denoise
             if self.options['denoise_method'] != 'none':
                 current_step += 1
                 pct = int(current_step / total_steps * 100)
                 self.progress.emit(pct, f"Denoising ({self.options['denoise_method']})...")
                 self._run_denoise()
+
+            # Step 5: Auto‑stretch
+            if self.options['autostretch']:
+                current_step += 1
+                pct = int(current_step / total_steps * 100)
+                self.progress.emit(pct, "Auto‑stretching...")
+                self._run_autostretch()
 
             self.progress.emit(100, "Complete!")
             self.finished.emit(True, "Image processed!")
@@ -411,6 +406,8 @@ class PrepWorker(QThread):
             steps += 1
         if self.options['denoise_method'] != 'none':
             steps += 1
+        if self.options['autostretch']:
+            steps += 1
         return max(steps, 1)
 
     def _run_background_extraction(self):
@@ -423,7 +420,7 @@ class PrepWorker(QThread):
             self.siril.cmd("pyscript", "GraXpert-AI.py",
                           "-bge", f"-smoothing={smoothing}")
         elif method == 'siril_rbf':
-            # Use Siril's built-in RBF background extraction
+            # Use Siril's built‑in RBF background extraction
             self.siril.cmd("subsky", "-rbf", "-samples=60",
                           "-tolerance=1.0", "-smooth=0.5")
 
@@ -556,6 +553,17 @@ class PrepWorker(QThread):
         if method in denoise_commands:
             self.siril.cmd(*denoise_commands[method])
 
+    def _run_autostretch(self):
+        """Run the Siril auto‑stretch command – always linked."""
+        # Default values used if not present
+        shadowsclip = self.options.get('shadowsclip', -2.8)
+        targetbg = self.options.get('targetbg', 0.25)
+
+        cmd_parts = ["autostretch", "-linked",
+                     str(shadowsclip), str(targetbg)]
+
+        self.siril.cmd(*cmd_parts)
+
 
 class VesperaPostprocessingWindow(QMainWindow):
     """Main window for Vespera Postprocessing plugin."""
@@ -568,6 +576,7 @@ class VesperaPostprocessingWindow(QMainWindow):
 
         self.setWindowTitle(f"Vespera Postprocessing v{VERSION}")
         self.setMinimumWidth(400)
+        self.setMinimumHeight(700)
         self.setStyleSheet(DARK_STYLESHEET)
 
         self._build_ui()
@@ -579,7 +588,6 @@ class VesperaPostprocessingWindow(QMainWindow):
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
         layout.setSpacing(12)
-        layout.setContentsMargins(16, 16, 16, 16)
 
         # Header
         header = QLabel("Vespera Postprocessing")
@@ -587,11 +595,6 @@ class VesperaPostprocessingWindow(QMainWindow):
         header.setStyleSheet("color: #88aaff;")
         header.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(header)
-
-        subtitle = QLabel("One-click preparation for VeraLux HMS")
-        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        subtitle.setStyleSheet("color: #888888; font-size: 9pt;")
-        layout.addWidget(subtitle)
 
         # Separator
         sep = QFrame()
@@ -603,7 +606,7 @@ class VesperaPostprocessingWindow(QMainWindow):
         # Background Extraction Group
         bge_group = QGroupBox("Background Extraction")
         bge_layout = QVBoxLayout(bge_group)
-
+        bge_layout.setSpacing(10) 
         self.bge_button_group = QButtonGroup(self)
 
         self.bge_graxpert = QRadioButton("GraXpert AI (Recommended)")
@@ -655,6 +658,7 @@ class VesperaPostprocessingWindow(QMainWindow):
         # Calibration Group
         cal_group = QGroupBox("Calibration")
         cal_layout = QVBoxLayout(cal_group)
+        cal_layout.setSpacing(10)                          
 
         # Sensor selection group – now centered
         self.sensor_group = QButtonGroup(self)
@@ -707,7 +711,7 @@ class VesperaPostprocessingWindow(QMainWindow):
         )
         cal_layout.addWidget(self.spcc_cb)
 
-        # New logic: uncheck SPCC if Plate Solve is unchecked
+        # Uncheck SPCC if Plate Solve is unchecked
         self.plate_solve_cb.stateChanged.connect(self._on_plate_solve_state_changed)
 
         self.spcc_filter_combo = QComboBox()
@@ -720,8 +724,9 @@ class VesperaPostprocessingWindow(QMainWindow):
         layout.addWidget(cal_group)
 
         # Denoise Group
-        denoise_group = QGroupBox("Denoise (Optional)")
+        denoise_group = QGroupBox("Denoise")
         denoise_layout = QVBoxLayout(denoise_group)
+        denoise_layout.setSpacing(10)
 
         self.denoise_button_group = QButtonGroup(self)
 
@@ -730,9 +735,9 @@ class VesperaPostprocessingWindow(QMainWindow):
         self.denoise_button_group.addButton(self.denoise_none, 0)
         denoise_layout.addWidget(self.denoise_none)
 
-        self.denoise_silentium = QRadioButton("VeraLux Silentium (wavelet, PSF-aware)")
+        self.denoise_silentium = QRadioButton("VeraLux Silentium (wavelet, PSF‑aware)")
         self.denoise_silentium.setToolTip(
-            "Physics-based wavelet denoiser.\n"
+            "Physics‑based wavelet denoiser.\n"
             "Uses actual star geometry for protection."
         )
         self.denoise_button_group.addButton(self.denoise_silentium, 1)
@@ -757,14 +762,33 @@ class VesperaPostprocessingWindow(QMainWindow):
 
         layout.addWidget(denoise_group)
 
-        # Launch HMS option
-        self.launch_hms_cb = QCheckBox("Launch VeraLux HMS when complete")
-        self.launch_hms_cb.setChecked(True)
-        self.launch_hms_cb.setToolTip(
-            "Automatically open HyperMetric Stretch\n"
-            "after preparation is complete."
+        # Stretch Group 
+        stretch_group = QGroupBox("Stretch")
+        stretch_layout = QVBoxLayout(stretch_group)
+        stretch_layout.setSpacing(10)
+
+        self.stretch_button_group = QButtonGroup(self)
+
+        # "Stretch" radio button
+        self.stretch_radio = QRadioButton("AutoStretch")
+        self.stretch_radio.setToolTip(
+            "Default AutoStretch from SIRIL after preparation is complete."
         )
-        layout.addWidget(self.launch_hms_cb)
+        self.stretch_radio.setChecked(True)  # default
+        self.stretch_button_group.addButton(self.stretch_radio, 0)
+        stretch_layout.addWidget(self.stretch_radio)
+
+        # "Veralux HMS" radio button
+        self.hms_radio = QRadioButton("VeraLux HMS")
+        self.hms_radio.setToolTip(
+            "Automatically open HyperMetric Stretch after preparation is complete."
+        )
+        self.hms_radio.setChecked(False)
+        self.stretch_button_group.addButton(self.hms_radio, 1)
+        stretch_layout.addWidget(self.hms_radio)
+
+        layout.addWidget(stretch_group)
+        # -----------------------------------------
 
         # Progress bar
         self.progress_bar = QProgressBar()
@@ -779,10 +803,20 @@ class VesperaPostprocessingWindow(QMainWindow):
         layout.addWidget(self.status_label)
 
         # Process button
-        self.process_button = QPushButton("Postprocess Image")
+        btn_layout = QHBoxLayout()
+        self.process_button = QPushButton("Process")
         self.process_button.setObjectName("PrepButton")
         self.process_button.clicked.connect(self._on_process_clicked)
-        layout.addWidget(self.process_button)
+        self.process_button.setStyleSheet("""
+            background-color: #285299;
+        """)
+        btn_layout.addWidget(self.process_button)
+
+        self.close_button = QPushButton("Close") 
+        self.close_button.clicked.connect(self.close)
+        btn_layout.addWidget(self.close_button)
+
+        layout.addLayout(btn_layout)
 
     def _load_settings(self):
         """Load saved settings."""
@@ -807,8 +841,11 @@ class VesperaPostprocessingWindow(QMainWindow):
         denoise = self.settings.value("denoise_method", 0, type=int)
         self.denoise_button_group.button(denoise).setChecked(True)
 
-        self.launch_hms_cb.setChecked(
-            self.settings.value("launch_hms", True, type=bool))
+        stretch_mode = self.settings.value("stretch_mode", 0, type=int)
+        if stretch_mode == 0:
+            self.stretch_radio.setChecked(True)
+        else:
+            self.hms_radio.setChecked(True)
 
         self.spcc_filter_combo.setCurrentIndex(
             self.settings.value("spcc_filter_index", 0, type=int))
@@ -822,10 +859,8 @@ class VesperaPostprocessingWindow(QMainWindow):
         # Save sensor selection
         self.settings.setValue("sensor", self.sensor_group.checkedId())
         self.settings.setValue("denoise_method", self.denoise_button_group.checkedId())
-        self.settings.setValue("launch_hms", self.launch_hms_cb.isChecked())
-
-        self.settings.setValue("spcc_filter_index",
-                               self.spcc_filter_combo.currentIndex())
+        self.settings.setValue("stretch_mode", 0 if self.stretch_radio.isChecked() else 1)
+        self.settings.setValue("spcc_filter_index", self.spcc_filter_combo.currentIndex()) 
 
     def _get_options(self):
         """Collect current options into a dictionary."""
@@ -852,11 +887,12 @@ class VesperaPostprocessingWindow(QMainWindow):
             'spcc_filter': self.spcc_filter_combo.currentText(),
             'denoise_method': denoise_methods.get(denoise_id, 'none'),
             'denoise_strength': 0.5,
-            'launch_hms': self.launch_hms_cb.isChecked(),
+            'autostretch': self.stretch_radio.isChecked(),
+            'hms_stretch': self.hms_radio.isChecked(),
             'optimize_format': True,
             'continue_on_failure': True,
             'pixel_size_um': pixel_size_um,
-            'spcc_sensor': spcc_sensor
+            'spcc_sensor': spcc_sensor,
         }
 
     def _on_plate_solve_state_changed(self, state):
@@ -868,7 +904,7 @@ class VesperaPostprocessingWindow(QMainWindow):
             self.spcc_cb.blockSignals(False)
 
         self._update_spcc_filter_visibility()
-    
+
     def _on_spcc_state_changed(self, state: int):
         """Enable plate solving when SPCC is enabled; do nothing when SPCC is disabled."""
         if state == Qt.CheckState.Checked.value:
@@ -876,6 +912,7 @@ class VesperaPostprocessingWindow(QMainWindow):
                 self.plate_solve_cb.setChecked(True)
                 self.siril.log("Plate solving enabled (required for SPCC)", LogColor.BLUE)
 
+        # No need to enforce linked mode – auto‑stretch is always linked
         self._update_spcc_filter_visibility()
 
     def _update_spcc_filter_visibility(self, checked: bool | None = None):
@@ -889,7 +926,6 @@ class VesperaPostprocessingWindow(QMainWindow):
         # Visible only when both SPCC and Plate Solve are active
         visible = checked and self.plate_solve_cb.isChecked()
         self.spcc_filter_combo.setVisible(visible)
-
 
     def _update_dso_input_visibility(self):
         """Show DSO input when needed for plate solving."""
@@ -945,7 +981,9 @@ class VesperaPostprocessingWindow(QMainWindow):
         if (options['bge_method'] == 'none' and
             not options['plate_solve'] and
             not options['spcc'] and
-            options['denoise_method'] == 'none'):
+            options['denoise_method'] == 'none' and
+            not options['autostretch'] and
+            not options['hms_stretch']):
             QMessageBox.information(self, "Nothing to do",
                 "Please select at least one operation.")
             return
@@ -1009,11 +1047,26 @@ class VesperaPostprocessingWindow(QMainWindow):
         self.progress_bar.setVisible(False)
 
         if success:
+            
+            try:
+                orig_name = self.siril.get_image_filename()
+                if orig_name:
+                    dir_path, base = os.path.split(orig_name)
+                    name, ext = os.path.splitext(base)
+
+                    new_name = f"{name}_processed"
+
+                    self.siril.cmd("save", new_name)
+            except Exception as e:
+                self.siril.log(f"Could not save processed image: {e}",
+                               LogColor.SALMON)
+
+            
             self.status_label.setText(message)
             self.status_label.setStyleSheet("color: #88ff88;")
 
             # Launch HMS if requested
-            if self.launch_hms_cb.isChecked():
+            if self.hms_radio.isChecked():
                 try:
                     self.siril.cmd("pyscript", "VeraLux_HyperMetric_Stretch.py")
                     self.close()
